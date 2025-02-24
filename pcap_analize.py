@@ -9,6 +9,7 @@ def analyze_pcap(file_path):
     arp_replies = []
     other_packets = []
     mac_dict = {}
+    ip_dict = {}
 
     for packet in packets:
         if Ether in packet:
@@ -26,6 +27,14 @@ def analyze_pcap(file_path):
         if IP in packet:
             ip_src = packet[IP].src
             ip_dst = packet[IP].dst
+
+            if ip_src not in ip_dict:
+                ip_dict[ip_src] = []
+            ip_dict[ip_src].append(packet)
+
+            if ip_dst not in ip_dict:
+                ip_dict[ip_dst] = []
+            ip_dict[ip_dst].append(packet)
 
             if ICMP in packet:
                 icmp_type = packet[ICMP].type
@@ -85,7 +94,12 @@ def analyze_pcap(file_path):
         for packet in packets:
             print(f"  Packet: {packet}")
 
+    # Анализ IP-адресов
+    print("\nАнализ IP-адресов:")
+    for ip, packets in ip_dict.items():
+        print(f"IP: {ip}")
+        for packet in packets:
+            print(f"  Packet: {packet}")
+
 if __name__ == "__main__":
     analyze_pcap('test.pcapng')  # Обязательно замените на имя вашего файла
-
-
