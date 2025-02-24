@@ -1,6 +1,7 @@
 from scapy.all import rdpcap, Ether, IP, ICMP, ARP
 from datetime import datetime
 
+
 def analyze_pcap(file_path):
     packets = rdpcap(file_path)
     icmp_requests = []
@@ -44,14 +45,18 @@ def analyze_pcap(file_path):
                 if icmp_type == 8:  # Echo request
                     timestamp = int(packet.time)
                     dt_object = datetime.fromtimestamp(timestamp)
-                    icmp_requests.append((ip_src, eth_src, eth_dst, dt_object, icmp_id, icmp_seq))
-                    print(f"ICMP Запрос: {ip_src} -> {ip_dst}, ID={icmp_id}, Seq={icmp_seq}, Время={dt_object}")
+                    icmp_requests.append(
+                        (ip_src, eth_src, eth_dst, dt_object, icmp_id, icmp_seq))
+                    print(
+                        f"ICMP Запрос: {ip_src} -> {ip_dst}, ID={icmp_id}, Seq={icmp_seq}, Время={dt_object}")
 
                 elif icmp_type == 0:  # Echo reply
                     timestamp = packet.time
                     dt_object = datetime.fromtimestamp(timestamp)
-                    icmp_replies.append((ip_src, eth_src, eth_dst, dt_object, icmp_id, icmp_seq))
-                    print(f"ICMP Ответ: {ip_src} -> {ip_dst}, ID={icmp_id}, Seq={icmp_seq}, Время={dt_object}")
+                    icmp_replies.append(
+                        (ip_src, eth_src, eth_dst, dt_object, icmp_id, icmp_seq))
+                    print(
+                        f"ICMP Ответ: {ip_src} -> {ip_dst}, ID={icmp_id}, Seq={icmp_seq}, Время={dt_object}")
 
                 else:
                     other_packets.append(packet)
@@ -75,17 +80,25 @@ def analyze_pcap(file_path):
     if request_ids:
         print("\nНет ответов на следующие ICMP Echo Requests:")
         for req in request_ids.values():
-            print(f"Запрос не получил ответ: {req[0]} (MAC: {req[1]}), отправленный в {req[3]}")
+            print(
+                f"Запрос не получил ответ: {
+                    req[0]} (MAC: {
+                    req[1]}), отправленный в {
+                    req[3]}")
 
     # Анализ обнаруженных ARP сообщений
     print("\nСтатистика ARP:")
     print(f"Запросы ARP: {len(arp_requests)}, Ответы ARP: {len(arp_replies)}")
 
     # Подсчет всех пакетов в файле
-    print(f"\nОбщее количество пакетов в файле: {len(packets)}")
-    print(f"Количество ICMP пакетов: {len(icmp_requests) + len(icmp_replies)}")
-    print(f"Количество ARP пакетов: {len(arp_requests) + len(arp_replies)}")
-    print(f"Количество других пакетов: {len(other_packets)}")
+    print(
+        f"Общее количество пакетов в файле: {
+            len(packets)} (ICMP пакеты: {
+            len(icmp_requests) +
+            len(icmp_replies)}, ARP пакеты: {
+                len(arp_requests) +
+                len(arp_replies)}, другие пакеты: {
+                    len(other_packets)}")
 
     # Анализ MAC-адресов
     print("\nАнализ MAC-адресов:")
@@ -100,6 +113,14 @@ def analyze_pcap(file_path):
         print(f"IP: {ip}")
         for packet in packets:
             print(f"  Packet: {packet}")
+
+    # Анализ времени отправки и получения пакетов
+    print("\nАнализ времени отправки и получения пакетов:")
+    for packet in packets:
+        timestamp = int(packet.time)
+        dt_object = datetime.fromtimestamp(timestamp)
+        print(f"Packet: {packet}, Время: {dt_object}")
+
 
 if __name__ == "__main__":
     analyze_pcap('test.pcapng')  # Обязательно замените на имя вашего файла
