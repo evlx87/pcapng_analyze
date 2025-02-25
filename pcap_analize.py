@@ -3,9 +3,23 @@ pcap_analyze.py - анализатор pcap файлов для ICMP и ARP па
 
 Этот скрипт анализирует pcap файлы и выводит информацию о ICMP и ARP пакетов.
 """
+import logging
+import os
 from datetime import datetime
 
 from scapy.all import rdpcap, Ether, IP, ICMP, ARP
+
+# Настройка логирования
+log_filename = 'analyze_pcap.log'
+logging.basicConfig(
+    filename=log_filename,
+    level=logging.DEBUG,
+    format='%(asctime)s - %(levelname)s - %(message)s')
+
+
+class TerminalColors:
+    RED = "\033[1;31m"   # Красный цвет, жирный
+    RESET = "\033[0m"    # Сброс цвета
 
 
 def add_packet_to_dict(address_dict, address, packet):
@@ -41,9 +55,8 @@ def handle_icmp(packet, icmp_requests, icmp_replies):
 
         if packet[ICMP].type == 8:  # ICMP Echo Request
             print(
-                f"ICMP Запрос: {
-                    packet[IP].src} -> {
-                    packet[IP].dst}, ID={icmp_id}, " f"Seq={icmp_seq}, Время={dt_object}")
+                f"ICMP Запрос: { packet[IP].src} -> { packet[IP].dst}, ID={icmp_id}, "
+                f"Seq={icmp_seq}, Время={dt_object}")
             icmp_requests[key] = (
                 packet[IP].src,
                 packet[Ether].src,
@@ -51,9 +64,8 @@ def handle_icmp(packet, icmp_requests, icmp_replies):
                 dt_object)
         elif packet[ICMP].type == 0:  # ICMP Echo Reply
             print(
-                f"ICMP Ответ: {
-                    packet[IP].src} -> {
-                    packet[IP].dst}, ID={icmp_id}, " f"Seq={icmp_seq}, Время={dt_object}")
+                f"ICMP Ответ: { packet[IP].src} -> { packet[IP].dst}, ID={icmp_id}, "
+                f"Seq={icmp_seq}, Время={dt_object}")
             icmp_replies[key] = (
                 packet[IP].src,
                 packet[Ether].src,
@@ -108,84 +120,108 @@ def report_no_reply_requests(no_reply_requests):
         print("\nНет ответов на следующие ICMP Echo Requests:")
         for req_key, req_info in no_reply_requests.items():
             print(
-                f"Запрос не получил ответ: {
-                    req_info[0]} (MAC: {
-                    req_info[1]}), отправленный в {
-                    req_info[3]}")
+                f"Запрос не получил ответ: {req_info[0]}(MAC: {req_info[1]}), отправленный в {req_info[3]}")
 
 
 def analyze_pcap(file_path):
-    """
-    Анализирует pcap файл и извлекает информацию о ICMP и ARP пакетах.
+    if not os.path.exists(file_path):
+        logging.error(f"Файл {file_path} не найден.")
+        return
 
-    Параметры:
-    file_path (str): Путь к pcap файлу для анализа.
-    """
     packets = rdpcap(file_path)
 
-    address_dict = {}  # Общий словарь для хранения MAC и IP адресов
-    icmp_requests = {}
-    icmp_replies = {}
-    arp_packet_count = 0
+    icmp_requests = []
+    icmp_replies = []
+    arp_requests = []
+    arp_replies = []
+    other_packets = []
+    mac_dict = {}
+
+    # Для анализа общей ситуации
+    observed_flows = {}  # Для записи потоков
 
     for packet in packets:
         if Ether in packet:
             eth_src = packet[Ether].src
             eth_dst = packet[Ether].dst
-            add_packet_to_dict(
-                address_dict=address_dict,
-                address=eth_src,
-                packet=packet)
-            add_packet_to_dict(
-                address_dict=address_dict,
-                address=eth_dst,
-                packet=packet)
+            # Сохраняем пакеты по MAC-адресам
+            mac_dict.setdefault(eth_src, []).append(packet)
+            mac_dict.setdefault(eth_dst, []).append(packet)
 
         if IP in packet:
             ip_src = packet[IP].src
             ip_dst = packet[IP].dst
-            add_packet_to_dict(
-                address_dict=address_dict,
-                address=ip_src,
-                packet=packet)
-            add_packet_to_dict(
-                address_dict=address_dict,
-                address=ip_dst,
-                packet=packet)
+            packet_id = packet[IP].id
+            ttl = packet[IP].ttl
 
-            # Вызовы отдельной функции для обработки ICMP
-            handle_icmp(packet, icmp_requests, icmp_replies)
+            # Проверка потока пакетов
+            if (ip_src, ip_dst, packet_id) not in observed_flows:
+                observed_flows[(ip_src, ip_dst, packet_id)] = []
 
-            # Вызов отдельной функции для обработки ARP
-            arp_packet_count += handle_arp(packet)
+            observed_flows[(ip_src, ip_dst, packet_id)].append((ttl, eth_src, eth_dst))
 
-    # Проверка отсутствующих ответов на ICMP
-    no_reply_requests = {
-        req_key: req_info
-        for req_key, req_info in icmp_requests.items()
-        if req_key not in icmp_replies
-    }
+            if ICMP in packet:
+                icmp_type = packet[ICMP].type
+                icmp_id = packet[ICMP].id
+                icmp_seq = packet[ICMP].seq
 
-    # Вывод информации о ICMP запросах без ответов
-    report_no_reply_requests(no_reply_requests)
+                if icmp_type == 8:  # Echo request
+                    timestamp = int(packet.time)
+                    dt_object = datetime.fromtimestamp(timestamp)
+                    icmp_requests.append((ip_src, eth_src, eth_dst, dt_object, icmp_id, icmp_seq))
+                    logging.info(f"ICMP Запрос: {ip_src} -> {ip_dst}, ID={icmp_id}, Seq={icmp_seq}, Время={dt_object}")
 
-    # Подсчет всех пакетов в файле
-    total_packets = len(packets)
-    other_packets_count = total_packets - len(icmp_requests) - arp_packet_count
+                elif icmp_type == 0:  # Echo reply
+                    timestamp = packet.time
+                    dt_object = datetime.fromtimestamp(timestamp)
+                    icmp_replies.append((ip_src, eth_src, eth_dst, dt_object, icmp_id, icmp_seq))
+                    logging.info(f"ICMP Ответ: {ip_src} -> {ip_dst}, ID={icmp_id}, Seq={icmp_seq}, Время={dt_object}")
 
-    # Вывод статистики
-    print(f"\nВсего пакетов: {total_packets}")
-    print(f"ICMP пакетов: {len(icmp_requests)}")
-    if arp_packet_count > 0:
-        print(f"ARP пакетов: {arp_packet_count}")
-    print(f"Другие пакеты: {other_packets_count}")
+                else:
+                    other_packets.append(packet)
 
-    # Анализ адресов
-    print("\nАнализ адресов:")
-    for address, packets in address_dict.items():
-        print(f"Адрес: {address}")
-        for packet in packets:
-            print(f"  Пакет: {packet.summary()}")
+            elif ARP in packet:
+                if packet[ARP].op == 1:
+                    arp_requests.append((ip_src, eth_src, eth_dst))
+                    logging.info(f"ARP Запрос: {ip_src} ищет {ip_dst}")
+                elif packet[ARP].op == 2:
+                    arp_replies.append((ip_src, eth_src, eth_dst))
+                    logging.info(f"ARP Ответ: {ip_src} отвечает {ip_dst}")
+            else:
+                other_packets.append(packet)
+
+    # Проверка на петлю маршрутизации
+    for flow_key, tl_data in observed_flows.items():
+        ip_src, ip_dst, packet_id = flow_key
+        if len(tl_data) >= 2:
+            # Проверяем на изменение TTL и MAC-адресов
+            ttl_values = [data[0] for data in tl_data]
+            mac_pairs = [(data[1], data[2]) for data in tl_data]
+
+            if all(ttl_values[i] == ttl_values[i + 1] + 1 for i in range(len(ttl_values) - 1)):
+                logging.warning(
+                    f"{TerminalColors.RED}Поток от {ip_src} до {ip_dst} содержит повторяющиеся пакеты с тем же ID {packet_id}.{TerminalColors.RESET}")
+                logging.warning(f"{TerminalColors.RED}MAC-адреса: {mac_pairs}.{TerminalColors.RESET}")
+
+                # Проверка на смену местами MAC-адресов
+                if all(mac_pairs[i][0] == mac_pairs[i + 1][1] and mac_pairs[i][1] == mac_pairs[i + 1][0] for i in
+                       range(len(mac_pairs) - 1)):
+                    logging.warning(
+                        f"{TerminalColors.RED}Обнаружена петля маршрутизации между MAC-адресами.{TerminalColors.RESET}")
+
+    # Анализ ARP сообщений
+    logging.info(f"Статистика ARP: Запросы ARP: {len(arp_requests)}, Ответы ARP: {len(arp_replies)}")
+
+    # Общее количество пакетов
+    logging.info(f"Общее количество пакетов в файле: {len(packets)}")
+    logging.info(f"Количество ICMP пакетов: {len(icmp_requests) + len(icmp_replies)}")
+    logging.info(f"Количество ARP пакетов: {len(arp_requests) + len(arp_replies)}")
+    logging.info(f"Количество других пакетов: {len(other_packets)}")
+
+    # Анализ MAC-адресов
+    logging.info("Анализ MAC-адресов:")
+    for mac, packets in mac_dict.items():
+        logging.info(f"MAC: {mac} -> Количество пакетов: {len(packets)}")
 
 
 if __name__ == "__main__":
