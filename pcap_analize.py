@@ -1,14 +1,9 @@
-"""
-pcap_analyze.py - анализатор pcap файлов для ICMP и ARP пакетов.
-
-Этот скрипт анализирует pcap файлы и выводит информацию о ICMP и ARP пакетов.
-"""
 import logging
 import os
 import sys
 from datetime import datetime
 
-from scapy.all import rdpcap, Ether, IP, ICMP, ARP
+from scapy.all import rdpcap, Ether, IP, ICMP, ARP, TCP
 
 
 class TerminalColors:
@@ -17,15 +12,9 @@ class TerminalColors:
 
 
 # Настройка логирования
-# log_filename = 'analyze_pcap.log'
 logging.basicConfig(level=logging.DEBUG,
                     format='%(asctime)s - %(levelname)s - %(message)s',
-                    handlers=[
-                        # logging.FileHandler(log_filename),  # Логирование в
-                        # файл
-                        logging.StreamHandler(
-                            sys.stdout)    # Логирование в консоль
-                    ])
+                    handlers=[logging.StreamHandler(sys.stdout)])
 
 
 def log_with_color(level, message):
@@ -35,28 +24,12 @@ def log_with_color(level, message):
 
 
 def add_packet_to_dict(address_dict, address, packet):
-    """
-    Добавляет пакет в словарь адресов.
-
-    Параметры:
-    address_dict (dict): Словарь, в который добавляются пакеты.
-    address (str): Адрес (MAC или IP), по которому добавляется пакет.
-    packet (scapy.layers.InPacket): Пакет, который нужно добавить.
-    """
     if address not in address_dict:
         address_dict[address] = []
     address_dict[address].append(packet)
 
 
 def handle_icmp(packet, icmp_requests, icmp_replies):
-    """
-    Обрабатывает ICMP пакеты и добавляет их в соответствующие словари.
-
-    Параметры:
-    packet (scapy.layers.InPacket): Пакет, который нужно обработать.
-    icmp_requests (dict): Словарь для хранения ICMP запросов.
-    icmp_replies (dict): Словарь для хранения ICMP ответов.
-    """
     if ICMP in packet:
         icmp_id = packet[ICMP].id
         icmp_seq = packet[ICMP].seq
@@ -66,32 +39,26 @@ def handle_icmp(packet, icmp_requests, icmp_replies):
         key = (icmp_id, icmp_seq)
 
         if packet[ICMP].type == 8:  # ICMP Echo Request
-            print(
-                f"ICMP Запрос: { packet[IP].src} -> { packet[IP].dst}, ID={icmp_id}, "
+            logging.info(
+                f"ICMP Запрос: {packet[IP].src} -> {packet[IP].dst}, ID={icmp_id}, "
                 f"Seq={icmp_seq}, Время={dt_object}")
             icmp_requests[key] = (
                 packet[IP].src,
                 packet[Ether].src,
                 packet[Ether].dst,
-                dt_object)
+                dt_object)  # Включаем timestamp
         elif packet[ICMP].type == 0:  # ICMP Echo Reply
-            print(
-                f"ICMP Ответ: { packet[IP].src} -> { packet[IP].dst}, ID={icmp_id}, "
+            logging.info(
+                f"ICMP Ответ: {packet[IP].src} -> {packet[IP].dst}, ID={icmp_id}, "
                 f"Seq={icmp_seq}, Время={dt_object}")
             icmp_replies[key] = (
                 packet[IP].src,
                 packet[Ether].src,
                 packet[Ether].dst,
-                dt_object)
+                dt_object)  # Включаем timestamp
 
 
 def process_arp(packet):
-    """
-    Обрабатывает ARP пакеты и выводит информацию о них.
-
-    Параметры:
-    packet (scapy.layers.InPacket): ARP пакет, который нужно обработать.
-    """
     src_ip = packet[ARP].psrc
     src_mac = packet[ARP].hwsrc
     dst_ip = packet[ARP].pdst
@@ -99,22 +66,14 @@ def process_arp(packet):
     arp_op = packet[ARP].op  # Операция: 1 (запрос) или 2 (ответ)
 
     if arp_op == 1:  # ARP Request
-        print(f"ARP Запрос: {src_mac} ({src_ip}) запрашивает адрес {dst_ip}")
+        logging.info(
+            f"ARP Запрос: {src_mac} ({src_ip}) запрашивает адрес {dst_ip}")
     elif arp_op == 2:  # ARP Reply
-        print(
+        logging.info(
             f"ARP Ответ: {src_mac} ({src_ip}) сообщает, что {dst_ip} присвоен {src_mac}")
 
 
 def handle_arp(packet):
-    """
-    Обрабатывает ARP пакеты. Возвращает 1, если пакет ARP, и 0 в противном случае.
-
-    Параметры:
-    packet (scapy.layers.InPacket): Пакет, который нужно проверить на наличие ARP.
-
-    Возвращает:
-    int: 1 если пакет является ARP пакетом, 0 иначе.
-    """
     if ARP in packet:
         process_arp(packet)
         return 1
@@ -122,28 +81,25 @@ def handle_arp(packet):
 
 
 def report_no_reply_requests(no_reply_requests):
-    """
-    Выводит сообщение для ICMP запросов, которые не получили ответ.
-
-    Параметры:
-    no_reply_requests (dict): Словарь ICMP запросов, на которые не было ответов.
-    """
     if no_reply_requests:
-        print("\nНет ответов на следующие ICMP Echo Requests:")
+        logging.info("\nНет ответов на следующие ICMP Echo Requests:")
         for req_key, req_info in no_reply_requests.items():
-            print(
-                f"Запрос не получил ответ: {req_info[0]}(MAC: {req_info[1]}), отправленный в {req_info[3]}")
+            logging.info(
+                f"Запрос не получил ответ: {
+                    req_info[0]}(MAC: {
+                    req_info[1]}), отправленный в {
+                    req_info[3]}")
 
 
 def analyze_pcap(file_path):
     if not os.path.exists(file_path):
         logging.error(f"Файл {file_path} не найден.")
-        return
+        return None, None, None
 
     packets = rdpcap(file_path)
 
-    icmp_requests = []
-    icmp_replies = []
+    icmp_requests = {}
+    icmp_replies = {}
     arp_requests = []
     arp_replies = []
     other_packets = []
@@ -156,7 +112,6 @@ def analyze_pcap(file_path):
         if Ether in packet:
             eth_src = packet[Ether].src
             eth_dst = packet[Ether].dst
-            # Сохраняем пакеты по MAC-адресам
             mac_dict.setdefault(eth_src, []).append(packet)
             mac_dict.setdefault(eth_dst, []).append(packet)
 
@@ -166,7 +121,6 @@ def analyze_pcap(file_path):
             packet_id = packet[IP].id
             ttl = packet[IP].ttl
 
-            # Проверка потока пакетов
             if (ip_src, ip_dst, packet_id) not in observed_flows:
                 observed_flows[(ip_src, ip_dst, packet_id)] = []
 
@@ -174,26 +128,7 @@ def analyze_pcap(file_path):
                 (ttl, eth_src, eth_dst))
 
             if ICMP in packet:
-                icmp_type = packet[ICMP].type
-                icmp_id = packet[ICMP].id
-                icmp_seq = packet[ICMP].seq
-
-                if icmp_type == 8:  # Echo request
-                    timestamp = int(packet.time)
-                    dt_object = datetime.fromtimestamp(timestamp)
-                    icmp_requests.append(
-                        (ip_src, eth_src, eth_dst, dt_object, icmp_id, icmp_seq))
-                    logging.info(
-                        f"ICMP Запрос: {ip_src} -> {ip_dst}, ID={icmp_id}, Seq={icmp_seq}, Время={dt_object}")
-
-                elif icmp_type == 0:  # Echo reply
-                    timestamp = packet.time
-                    dt_object = datetime.fromtimestamp(timestamp)
-                    icmp_replies.append(
-                        (ip_src, eth_src, eth_dst, dt_object, icmp_id, icmp_seq))
-                    logging.info(
-                        f"ICMP Ответ: {ip_src} -> {ip_dst}, ID={icmp_id}, Seq={icmp_seq}, Время={dt_object}")
-
+                handle_icmp(packet, icmp_requests, icmp_replies)
             elif ARP in packet:
                 if packet[ARP].op == 1:  # ARP Request
                     arp_requests.append((ip_src, eth_src, eth_dst))
@@ -207,45 +142,150 @@ def analyze_pcap(file_path):
     # Общее количество пакетов
     logging.info(f"Общее количество пакетов в файле: {len(packets)}")
     logging.info(
-        f"Количество ICMP пакетов: {len(icmp_requests) + len(icmp_replies)}")
+        f"Количество ICMP пакетов: {
+            len(icmp_requests) +
+            len(icmp_replies)}")
     logging.info(
-        f"Количество ARP пакетов: {len(arp_requests) + len(arp_replies)}")
+        f"Количество ARP пакетов: {
+            len(arp_requests) +
+            len(arp_replies)}")
     logging.info(f"Количество других пакетов: {len(other_packets)}")
 
     # Статистика ARP
     logging.info(
-        f"Статистика ARP: Запросы ARP: {len(arp_requests)}, Ответы ARP: {len(arp_replies)}")
+        f"Статистика ARP: Запросы ARP: {
+            len(arp_requests)}, Ответы ARP: {
+            len(arp_replies)}")
 
     # Анализ MAC-адресов
     logging.info("Анализ MAC-адресов:")
     for mac, packets in mac_dict.items():
         logging.info(f"MAC: {mac} -> Количество пакетов: {len(packets)}")
 
-    # Проверка на петлю маршрутизации
-    for flow_key, tl_data in observed_flows.items():
+    return packets, observed_flows, (icmp_requests, icmp_replies,
+                                     arp_requests, arp_replies, other_packets)
+
+
+def check_duplicate_packets(observed_flows):
+    duplicate_packets = []
+
+    for flow_key, packets in observed_flows.items():
         ip_src, ip_dst, packet_id = flow_key
-        if len(tl_data) >= 2:
-            # Проверяем на изменение TTL и MAC-адресов
-            ttl_values = [data[0] for data in tl_data]
-            mac_pairs = [(data[1], data[2]) for data in tl_data]
 
-            if all(ttl_values[i] == ttl_values[i + 1] +
-                   1 for i in range(len(ttl_values) - 1)):
-                log_with_color(
-                    logging.WARNING,
-                    f"Поток от {ip_src} до {ip_dst} содержит повторяющиеся пакеты с тем же ID {packet_id}.")
-                # Вывод MAC-адресов по строчно
-                logging.warning("MAC-адреса:")
-                for src_mac, dst_mac in mac_pairs:
-                    logging.warning(f"  {src_mac} <-> {dst_mac}")
+        if len(packets) > 1:
+            first_ttl, first_eth_src, first_eth_dst = packets[0]
+            last_ttl, last_eth_src, last_eth_dst = packets[-1]
 
-                # Проверка на смену местами MAC-адресов
-                if all(mac_pairs[i][0] == mac_pairs[i + 1][1] and mac_pairs[i]
-                       [1] == mac_pairs[i + 1][0] for i in range(len(mac_pairs) - 1)):
-                    log_with_color(
-                        logging.WARNING,
-                        "Обнаружена петля маршрутизации между MAC-адресами.")
+            if first_ttl == last_ttl and first_eth_src == last_eth_src and first_eth_dst == last_eth_dst:
+                duplicate_packets.append(flow_key)
+
+    if duplicate_packets:
+        log_with_color(logging.WARNING,
+                       f"Обнаружены дублирующие пакеты: {duplicate_packets}")
+
+
+def detect_routing_loops(observed_flows):
+    routing_loops = []
+
+    for flow_key, packets in observed_flows.items():
+        ip_src, ip_dst, packet_id = flow_key
+
+        ttl_values = [packet[0] for packet in packets]
+        mac_pairs = [(packet[1], packet[2]) for packet in packets]
+
+        if len(ttl_values) > 2 and len(set(ttl_values)) == 1:
+            log_with_color(
+                logging.WARNING,
+                f"Обнаружена потенциальная петля маршрутизации: {flow_key}")
+            routing_loops.append(flow_key)
+
+    if routing_loops:
+        log_with_color(
+            logging.WARNING, f"Обнаружено {
+                len(routing_loops)} потенциальных петель маршрутизации.")
+
+
+def check_latency_anomalies(observed_flows):
+    latency_anomalies = []
+
+    for flow_key, packets in observed_flows.items():
+        ip_src, ip_dst, packet_id = flow_key
+
+        # Извлекаем таймстемпы, только если длина кортежа >= 4
+        timestamps = [packet[3] for packet in packets if len(packet) > 3]
+
+        # Если у нас не достаточно таймстемпов, продолжаем к следующему потоку
+        if len(timestamps) < 2:
+            continue
+
+        # Рассчитываем задержки
+        latencies = [timestamps[i + 1] - timestamps[i] for i in range(len(timestamps) - 1)]
+        max_latency = max(latencies)
+        avg_latency = sum(latencies) / len(latencies)
+
+        if max_latency > avg_latency * 2:
+            latency_anomalies.append(flow_key)
+
+    if latency_anomalies:
+        log_with_color(logging.WARNING,
+                       f"Обнаружены аномальные задержки в потоках: {latency_anomalies}")
+
+
+def validate_protocols(packets):
+    protocol_errors = []
+
+    for packet in packets:
+        if IP in packet:
+            # Получаем длину заголовка в байтах
+            ip_header_length = packet[IP].ihl * 4
+            expected_length = 20
+            if ip_header_length != expected_length:
+                protocol_errors.append(
+                    f"Неверная длина заголовка IP: {ip_header_length} байт")
+
+        if ICMP in packet:
+            icmp_type = packet[ICMP].type
+            if icmp_type not in [0, 8]:
+                protocol_errors.append(f"Неизвестный тип ICMP: {icmp_type}")
+
+        if ARP in packet:
+            arp_operation = packet[ARP].op
+            if arp_operation not in [1, 2]:
+                protocol_errors.append(
+                    f"Недопустимая операция ARP: {arp_operation}")
+
+    if protocol_errors:
+        log_with_color(logging.ERROR,
+                       f"Обнаружены проблемы с протоколами: {protocol_errors}")
+
+
+def find_anomalous_packets(packets):
+    anomalous_packets = []
+
+    for packet in packets:
+        if IP in packet:
+            ttl_value = packet[IP].ttl
+            if ttl_value <= 0 or ttl_value > 255:
+                anomalous_packets.append(
+                    f"Аномальное значение TTL: {ttl_value}")
+
+        if TCP in packet:
+            tcp_flags = packet[TCP].flags
+            if tcp_flags & 0xF0 != 0x00:
+                anomalous_packets.append(
+                    f"Подозрительный набор флагов TCP: {tcp_flags}")
+
+    if anomalous_packets:
+        log_with_color(logging.WARNING,
+                       f"Обнаружены аномальные пакеты: {anomalous_packets}")
 
 
 if __name__ == "__main__":
-    analyze_pcap('test.pcapng')  # Обязательно замените на имя вашего файла
+    packets, observed_flows, result_data = analyze_pcap(
+        'test.pcapng')  # Обязательно замените на имя вашего файла
+    # Вызываем дополнительные проверки после анализа PCAP-файла
+    check_duplicate_packets(observed_flows)
+    detect_routing_loops(observed_flows)
+    check_latency_anomalies(observed_flows)
+    validate_protocols(packets)
+    find_anomalous_packets(packets)
