@@ -1,5 +1,3 @@
-# utils/network_utils.py
-
 from collections import defaultdict
 
 from scapy.all import IP
@@ -25,13 +23,12 @@ def detect_duplicates(flows):
         if len(packets) > 1:
             first_pkt = packets[0]
             last_pkt = packets[-1]
-            if first_pkt and last_pkt:
-                if first_pkt.get(
-                        'ip_info',
-                        {}).get('ip_src') == last_pkt.get(
-                        'ip_info',
-                        {}).get('ip_src'):
-                    duplicates.append(flow_key)
+            if (
+                first_pkt.haslayer(IP) and
+                last_pkt.haslayer(IP) and
+                first_pkt[IP].src == last_pkt[IP].src
+            ):
+                duplicates.append(flow_key)
 
     return duplicates
 
@@ -39,9 +36,15 @@ def detect_duplicates(flows):
 def detect_routing_loops(flows):
     loops = []
     for flow_key, packets in flows.items():
-        ttl_values = [pkt["ip_info"]["ttl"] for pkt in packets]
-        if len(ttl_values) > 2 and len(set(ttl_values)) == 1:
-            loops.append(flow_key)
+        if len(packets) >= 2:  # Убедимся, что есть хотя бы два пакета в потоке
+            ttl_values = []  # Список TTL значений
+            for pkt in packets:
+                if IP in pkt:  # Проверим, является ли пакет IP-пакетом
+                    ttl = pkt[IP].ttl  # Извлекаем значение TTL
+                    ttl_values.append(ttl)
+
+            if len(set(ttl_values)) == 1:  # Все TTL одинаковы?
+                loops.append(flow_key)
 
     return loops
 

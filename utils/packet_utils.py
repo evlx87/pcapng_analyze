@@ -1,4 +1,3 @@
-# utils/packet_utils.py
 import socket
 
 from scapy.all import IP, ICMP, TCP, Ether
@@ -11,8 +10,6 @@ def is_valid_ip_address(ip):
         return True
     except socket.error:
         return False
-
-# utils/packet_utils.py
 
 
 def get_packet_info(packet):
